@@ -4,7 +4,7 @@ Coursera course final project repo
 
 This is my first change to the file
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml">
+<html xmlns="https://github.com/BarbaraFroner78/test/edit/master/README.md">
 <head>
 <meta charset="utf-8"><meta http-equiv="Content-Type" content="text/html; charset=utf-8" /><meta name="generator" content="pandoc" />
 
