@@ -1,0 +1,333 @@
+---
+title: "Practical Machine Learning - Final Assignment"
+author: "Barbara Froner"
+date: "3 December 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r include = FALSE}
+load("C:/Users/Barbara/Desktop/BARBARA/R/Coursera_PracticalMachineLearning/Workspaces/AllModels_IncludingSuperClean.RData")
+```
+
+
+## Objective
+
+The objective of this project is to predict the way in which the candidates involved in the Human Activity Recognition research study performed the weight lifting exercises assigned to them. The variable "classe" in the provided training dataset represents the manner in which the exercises were executed and could be predicted in the testing dataset by using any other available variable as predictor. 
+
+
+## The Data at Glance
+
+The data provided for the exercise was downloaded from the course web page on the Coursera website <https://www.coursera.org> and read into the R session via *read.csv()*.
+
+```{r eval = FALSE}
+training <- read.csv( paste( folder, "pml-training.csv", sep = "" ) )
+testing <- read.csv( paste( folder, "pml-testing.csv", sep = "" ) )
+```
+
+The data provided comprised:
+
+- a *training* dataset of 19622 rows (observations) by 160 columns (variables), used to create the machine learning models; 
+- a *testing* dataset of 20 rows by 159 columns, where the "classe" variable was missing and had to be predicted using the models.
+
+Given the high number of variables in the dataset it was hard to understand how they all related to each other and to the dependent variable "classe" by simply plotting them with, for example, with cross plots.
+
+By looking at the structure and the summary of the dataset with the commands *str* and *summary* it was possible to see that there were variables of different type, including integer, factor and numeric variables. It was also possible to see that a number of variables had missing, invalid (e.g. #DIV/0!) and NA values. Finally, some variables did not seem to be related to the "classe" variable that had to be predicted. It was therefore necessary to clean the data before creating the models.
+
+```{r}
+str( training[ ,1:16] ) 
+```
+
+
+## Data Exploration and Cleaning
+
+At the data cleaning stage, the following points were addressed:
+
+- **Identify and get rid of NA values** - By looking at the training data and applying the *is.na()* function column-wise it became apparent that a number of variables had a high frequency of NA values (98% of the observations) while other variables had valid values for each observation. The former were mainly summary statistics of primary variables such as mean, standard deviation, sample minimum and maximum, which could be derived from the primary variables in the dataset anyway. Therefore it was decided not to perform any data imputation and to remove the variables / columns with a high frequency of NA values. Specifically, 67 variables were pruned from the dataset at this stage. 
+
+- **Identify and get rid of blanks** - Similarly to the previous point, it was noticed that 33 variables were missing a value for 98% of the observations. Again, these variables were removed from the dataset and no imputation was performed. 
+
+- **Remove variables that are not related to the variable to be predicted** - After manual inspection, a total of seven variables were removed as they did not seem to bear any relationship to the "classe" variable that neede to be predicted. These were: "X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window".
+
+The code chunks below show what was performed at the data cleaning stage.
+
+```{r}
+# Find na values and get rid of them
+nasPerColumn <- colSums( is.na( training ) )
+trainingClean <- training[ ,nasPerColumn==0]
+```
+
+```{r}
+# Find blanks (empty cells) and get rid of them
+blanksPerColumn <- colSums( trainingClean == "" )
+trainingClean <- trainingClean[ ,blanksPerColumn==0]
+```
+
+```{r}
+# Get rid of predictors that are not relevant / related to what we want to predict
+colToBeDeleted <- c("X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp", "new_window", "num_window" )
+trainingClean <- trainingClean[ ,!names(trainingClean) %in% colToBeDeleted]
+```
+
+After the above cleaning operations the training dataset had a total of 19622 complete observations and 53 variables: 52 independent variables  (potential predictors) and one dependent variable (the variable "classe" that needed to be predicted).
+
+```{r}
+dim( trainingClean )
+```
+
+One last thing that was explored at this stage was the correlation between the 52 potential predictors in order to see if it was possible to get rid of redundant variables and reduce the size of the dataset any further. A correlation cut-off of 80% showed that 22 of the 52 independent  variables were highly correlated.
+
+```{r}
+correlations <- abs( cor( trainingClean[ ,-53] ) )
+diag( correlations ) <- 0
+highlyCorrelated <- which( correlations > 0.8, arr.ind = TRUE )
+highlyCorrelated
+length( unique( highlyCorrelated[ ,1] ) )
+```
+
+This could potentially lead to further pruning of the training dataset by eliminating 13 redundant predictors as highlighted in the following code chunk.
+
+```{r}
+names( trainingClean[ ,c(3,4,9,10,8,11,19,24,26,34,36,33,45)] )
+```
+
+However it was decided to first fit the machine learning models to the 53 variables *trainingClean* dataset and leave the *trainingSuperClean* 40 variables dataset for further exploration.
+
+
+## Data Partitioning
+
+Before fitting any models, the *trainigClean* dataset was partitioned using the caret package as follows:
+
+ - 60% for training the models (*tTraining* dataset): 11776 observations.
+ - 40% for testing the model (*tTesting* dataset): 7846 observations.
+
+```{r warning = FALSE, message = FALSE}
+library( caret )
+inTrain <- createDataPartition( trainingClean$classe, p = 0.6 )[[1]]
+tTraining <- trainingClean[inTrain, ]
+tTesting <- trainingClean[-inTrain, ]
+```
+
+In this way it was possible to estimate the out-of-sample error for the models before using them to predict the value of the variable "classe" of the testing dataset provided as part of this project. That is, the models were trained on the *tTraining* dataset and then used to predict the "classe" variables in the *tTesting* datset. By looking at the discrepancy between the predicted values and the real values of "classe" variable in *tTesting* it was possible to estimate the out-of-sample error of the models. The in-sample error was instead computed by looking at the discrepancy between the predicted value and the actual value of the variable "classe" in the *tTraining* dataset.
+
+
+## Model Fitting
+
+Seven different models were fitted to the *tTraining* dataset and then assessed using the *tTesting* dataset. The explored models used different statistical techniques and tuning parameters as summarised below. Fitting times for each model were recorded.
+
+- **modFit_LDA** Linear Discriminant Analysis model with *caret* default parameters and settings. Fitting time: almost instant.
+- **modFit_PCA_LDA** Linear Discriminant Analysis model with *caret* default parameters and settings and Principal Component Pre-Processing. Fitting time almost instant.
+- **modFit_RFDefault** Random Forests model with *caret* default parameters and settings. Fitting time: 1 h and 15 minutes.
+- **modFit_RFCV10** Random Forests model with 10-fold cross-validation. Fitting time: 28 minutes.
+- **modFit_RF50Trees** Random Forests model with only 50 trees (by default the *caret* package uses 500 trees). Fitting time: 8 minutes.
+- **modFit_RF50TreesCV10** Random Forests model with 10-fold cross-validation and only 50 trees. Fitting time: 3 minutes
+- **modFit_GBM** Gradient Boosting model with *caret* default settings. Fitting time: 30 minutes.
+
+Regarding the Linear Discriminant Analysis with Principal Component Analysis pre-processing, the rationale behind was that the dataset had a 22 predictors that were highly correlated with each other and therefore the Principal Component Analysis pre-processing step could potentially help to reduce the number of predictors needed whilst capturing most of the variability in the data.
+
+```{r}
+seed <- 1234
+```
+
+```{r eval = FALSE}
+# Linear Discriminant Analysis
+set.seed( seed )
+modFit_LDA <- train( classe ~ ., method = "lda", data = tTraining )
+predTTest_LDA <- predict( modFit_LDA, tTesting )
+confusionMatrix( tTesting$classe, predTTest_LDA )
+
+# Pre-process with PCA
+preProc <- preProcess( tTraining, method = "pca", thresh = 0.80 )
+trainPCA <- predict( preProc, tTraining )
+set.seed( seed )
+modFit_PCA_LDA <- train( classe ~ ., method = "lda", data = trainPCA )
+
+# Linear Discriminant Analysis with PCA Pre-Processing
+set.seed( seed )
+testPCA <- predict( preProc, tTesting )
+predTTest_PCA_LDA <- predict( modFit_PCA_LDA, testPCA )
+confusionMatrix( tTesting$classe, predTTest_PCA_LDA )
+```
+
+```{r eval = FALSE}
+# Default Random Forest
+ptm <- proc.time()
+set.seed( seed )
+modFit_RFDefault <- train( classe ~ ., data = tTraining, method = "rf" )
+print( "Time to fit the default Random Forest model: " )
+proc.time() - ptm
+
+predTTest_RFDefault <- predict( modFit_RFDefault, tTesting )
+confusionMatrix( tTesting$classe, predTTest_RFDefault )
+
+# Random Forest with 10-fold cv
+trainControl_cv10 <- trainControl( method = "cv", number = 10 )
+
+ptm <- proc.time()
+set.seed( seed )
+modFit_RFCV10 <- train( classe ~ ., data = tTraining, method = "rf", trControl = trainControl_cv10 )
+print( "Time to fit the Random Forest model with 10-fold cv: " )
+proc.time() - ptm
+
+predTTest_RFCV10 <- predict( modFit_RFCV10, tTesting )
+confusionMatrix( tTesting$classe, predTTest_RFCV10 )
+
+# Random Forest with only 50 trees
+ptm <- proc.time()
+set.seed( seed )
+modFit_RF50Trees <- train( classe ~ ., data = tTraining, method = "rf", ntree = 50 )
+print( "Time to fit the Random Forest model with only 50 trees: " )
+proc.time() - ptm
+
+predTTest_RF50Trees <- predict( modFit_RF50Trees, tTesting )
+confusionMatrix( tTesting$classe, predTTest_RF50Trees )
+
+# Random Forest with only 50 trees with 10-fold cv
+ptm <- proc.time()
+set.seed( seed )
+modFit_RF50TreesCV10 <- train( classe ~ ., data = tTraining, method = "rf", ntree = 50, trControl = trainControl_cv10 )
+print( "Time to fit the Random Forest model with only 50 trees and 10-fold CV: " )
+proc.time() - ptm
+
+predTTest_RF50TreesCV10 <- predict( modFit_RF50TreesCV10, tTesting )
+confusionMatrix( tTesting$classe, predTTest_RF50TreesCV10 )
+```
+
+```{r eval = FALSE}
+# Gradient Boosting
+ptm <- proc.time()
+set.seed( seed )
+modFit_GBM <- train( classe ~ ., method = "gbm", data = tTraining )
+print( "Time to fit the default Gradient Boosting model: " )
+proc.time() - ptm
+
+predTTest_GBM <- predict( modFit_GBM, tTesting )
+confusionMatrix( tTesting$classe, predTTest_GBM )
+```
+
+
+## Model Assessment and Error Estimation
+
+The seven models described in the previous section were used to predict the "classe". Their in-sample accuracy and erros are an indication of how well they predicted the "classe" variable in the *tTrainig* dataset. On the other hand, an estimate of their out-of-sample accuracy and error could be given by assessing how well they predicted the "classe" variable in the *tTesting* dataset.
+
+The accuracy of a model could be determined by simply inspecting the model object or by calculating it manually.
+
+```{r}
+modFit_LDA
+```
+
+```{r message = FALSE, warnings = FALSE}
+sum( predict( modFit_LDA , tTraining ) == tTraining$classe ) / length( tTraining$classe )
+```
+
+Similarly, the out-of-sample accuracy could be determined by inspecting the confusion matrix object by calculating it manually.
+
+```{r message = FALSE, warnings = FALSE}
+predTTest_LDA <- predict( modFit_LDA, tTesting )
+cm_LDA <- confusionMatrix( tTesting$classe, predTTest_LDA )
+cm_LDA$overall
+```
+
+```{r}
+sum( predict( modFit_LDA, tTesting ) == tTesting$classe) / length( tTesting$classe )
+```
+
+The table below summarises the performance for the seven models, in terms of in-sample accuracy, in-sample error, out-of-sample accuracy, out-of-sample error and run-time required to fit the model. The accuracy values reported are taken from the model and confusion matrix objects respectively.
+
+```{r echo = FALSE}
+modelName <- c( "modFit_LDA", "modFit_PCA_LDA2", "modFit_RFDefault", "modFit_RFCV10", "modFit_RF50Trees", "modFit_RF50TreesCV10", "modFit_GBM")
+inSAcc <- c( 0.6984779, 0.4626796, 0.9852415, 0.9904895, 0.9824113, 0.9896402, 0.9553872 )
+inSErr <- c( 1 - inSAcc )
+outSAcc <- c( 0.7069845, 0.4734897, 0.9917155, 0.9918430, 0.9903135, 0.9898037, 0.9599796 )
+outSErr <- c( 1 - outSAcc )
+runTime <- c( "< 1 min", "< 1 min", "1 h 15 min", "28 min", "8 min", "3 min", "30 min" )
+
+resultsClean <- data.frame( modelName, inSAcc, inSErr, outSAcc, outSErr, runTime )
+resultsClean
+```
+
+Based from the results it is possible to see that the best models are the ones generated using the Random Forest algorithm. In particular, the Random Forest model created using 10-fold Cross Validation appears to be the best, also in terms of accuracy - run-time trade-off. On the other hand, the worst model is the one generated using the Principal Component Analysis pre-processing step and the Linear Discriminant Analysis algorithm. These results could suggest that the problem has a non-linear nature.
+
+One last aspect that was explored was the fitting of the predictive models to the *trainingSuperClean* dataset with only 40 variables (see the Data Cleaning section above). The *trainingSuperClean* dataset was partitioned in a *tTrainingSC* dataset containing 60% of the observations and a *tTestingSC* dataset containig the remaining 40% of the observations. The four Random Forest models as specified above were then trained by using the *tTrainingSC* dataset and used to predict the "classe" variable in the *tTestingSC* dataset. The results are summarised in the table below.
+
+```{r eval = FALSE}
+### Random Forests without highly correlated variables
+
+trainingSuperClean <- trainingClean[ ,-c(3,4,9,10,8,11,19,24,26,34,36,33,45)]
+
+inTrain <- createDataPartition( trainingSuperClean$classe, p = 0.6 )[[1]]
+tTrainingSC <- trainingSuperClean[inTrain, ]
+tTestingSC <- trainingSuperClean[-inTrain, ]
+
+# Default Random Forest
+ptm <- proc.time()
+set.seed( seed )
+modFit_RFDefaultSC <- train( classe ~ ., data = tTrainingSC, method = "rf" )
+print( "Time to fit the default SC Random Forest model: " )
+proc.time() - ptm
+
+predTTest_RFDefaultSC <- predict( modFit_RFDefaultSC, tTestingSC )
+confusionMatrix( tTestingSC$classe, predTTest_RFDefaultSC )
+
+# Random Forest with 10-fold cv
+ptm <- proc.time()
+set.seed( seed )
+modFit_RFCV10SC <- train( classe ~ ., data = tTrainingSC, method = "rf", trControl = trainControl_cv10 )
+print( "Time to fit the SC Random Forest model with 10-fold cv: " )
+proc.time( "59 min", ) - ptm
+
+predTTest_RFCV10SC <- predict( modFit_RFCV10SC, tTestingSC )
+confusionMatrix( tTestingSC$classe, predTTest_RFCV10SC )
+
+# Random Forest with only 50 trees
+ptm <- proc.time()
+set.seed( seed )
+modFit_RF50TreesSC <- train( classe ~ ., data = tTrainingSC, method = "rf", ntree = 50 )
+print( "Time to fit the SC Random Forest model with only 50 trees: " )
+proc.time() - ptm
+
+predTTest_RF50TreesSC <- predict( modFit_RF50TreesSC, tTestingSC )
+confusionMatrix( tTestingSC$classe, predTTest_RF50Trees )
+
+# Random Forest with only 50 trees with 10-fold cv
+ptm <- proc.time()
+set.seed( seed )
+modFit_RF50TreesCV10SC <- train( classe ~ ., data = tTrainingSC, method = "rf", ntree = 50, trControl = trainControl_cv10 )
+print( "Time to fit the SC Random Forest model with only 50 trees and 10-fold CV: " )
+proc.time() - ptm
+
+predTTest_RF50TreesCV10SC <- predict( modFit_RF50TreesCV10SC, tTestingSC )
+confusionMatrix( tTestingSC$classe, predTTest_RF50TreesCV10SC )
+```
+
+The results are summarised in the table below.
+
+```{r echo = FALSE}
+modelName <- c( "modFit_RFDefaultSC", "modFit_RFCV10SC", "modFit_RF50TreesSC", "modFit_RF50TreesCV10SC")
+inSAcc <- c( 0.9829314, 0.9876871, 0.9806464, 0.9852241 )
+inSErr <- c( 1 - inSAcc )
+outSAcc <- c( 0.9890390, 0.9892939, 0.9903135, 0.9884017 )
+outSErr <- c( 1 - outSAcc )
+runTime <- c( "51 min", "19 min", "2 min", "2 min" )
+
+resultsSuperClean <- data.frame( modelName, inSAcc, inSErr, outSAcc, outSErr, runTime )
+resultsSuperClean
+```
+
+These results indicate that the performance of the four Random Forest algorithms trained on the training dataset with only 40 variables (*tTrainingSC*) are comparable to the performance of the equivalent models trained on the bigger training dataset with 53 variables (*tTraining*).
+
+
+## Conclusions
+
+The variable "classe" in the final testing dataset (*testing*, read straight from the pml-testing.csv file) was predicted using the two best models trained in the 53 variable training dataset and the 40 variables training dataset respectively, namely the 10-fold cross-validation Random Forest model (**modFit_RFCV10**) and the Random Forest model with only 50 trees (**modFit_RF50TreesSC**).
+
+```{r message = FALSE, warnings = FALSE, message = FALSE }
+predict( modFit_RFCV10, testing )
+predict( modFit_RF50TreesSC, testing )
+```
+The predictions are concordant and were used as the final answer for this assignment.
+
+
